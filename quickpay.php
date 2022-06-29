@@ -3,11 +3,11 @@
 * NOTICE OF LICENSE
 *
 *  @author    Kjeld Borch Egevang
-*  @copyright 2015 Quickpay
+*  @copyright 2020 QuickPay
 *  @license   http://opensource.org/licenses/afl-3.0.php  Academic Free License (AFL 3.0)
 *
-*  $Date: 2017/11/28 06:37:12 $
-*  E-mail: helpdesk@quickpay.net
+*  $Date: 2021/01/05 08:05:42 $
+*  E-mail: support@quickpay.net
 */
 
 class QuickPay extends PaymentModule
@@ -19,11 +19,11 @@ class QuickPay extends PaymentModule
     {
         $this->name = 'quickpay';
         $this->tab = 'payments_gateways';
-        $this->version = '4.0.38';
-        $this->v14 = _PS_VERSION_ >= '1.4.1.0';
+        $this->version = '4.1.9b';
         $this->v15 = _PS_VERSION_ >= '1.5.0.0';
         $this->v16 = _PS_VERSION_ >= '1.6.0.0';
         $this->v17 = _PS_VERSION_ >= '1.7.0.0';
+        $this->v177 = _PS_VERSION_ >= '1.7.7.0';
         $this->author = 'Kjeld Borch Egevang';
         $this->module_key = 'b99f59b30267e81da96b12a8d1aa5bac';
         $this->need_instance = 0;
@@ -32,24 +32,14 @@ class QuickPay extends PaymentModule
 
         parent::__construct();
 
-        $this->displayName = $this->l('Quickpay');
-        $this->description = $this->l('Accept payments by Quickpay');
-        $this->description = $this->l('Payment via Quickpay');
+        $this->displayName = 'QuickPay';
+        $this->submitName = sprintf('submit%sModule', $this->name);
+        $this->description = sprintf($this->l('Payment via %s'), 'QuickPay');
         $this->confirmUninstall =
             $this->l('Are you sure you want to delete your settings?');
 
-        /* Backward compatibility */
         if (!$this->v15) {
-            $this->local_path = _PS_MODULE_DIR_.$this->name.'/';
-            $this->back_file =
-                $this->local_path.'backward_compatibility/backward.php';
-            if (file_exists($this->back_file)) {
-                require($this->back_file);
-            }
-        }
-
-        if (!$this->v14) {
-            $this->warning = $this->l('This module only works for PrestaShop 1.4, 1.5 and 1.6');
+            $this->warning = $this->l('This module only works for PrestaShop 1.5, 1.6 and 1.7');
         }
     }
 
@@ -69,21 +59,9 @@ class QuickPay extends PaymentModule
         return $vars;
     }
 
-    public function checkLangFile()
-    {
-        if (isset($this->back_file)) {
-            $src = Tools::file_get_contents($this->local_path.'translations/da.php');
-            $dst = Tools::file_get_contents($this->local_path.'da.php');
-            if ($src != $dst) {
-                file_put_contents($this->local_path.'da.php', $src);
-            }
-        }
-    }
-
     public function install()
     {
         include(dirname(__FILE__).'/sql/install.php');
-        $this->checkLangFile();
 
         if (!parent::install()) {
             return false;
@@ -99,11 +77,14 @@ class QuickPay extends PaymentModule
             $this->registerHook('header') &&
             $this->registerHook('leftColumn') &&
             $this->registerHook('footer') &&
-            $this->registerHook('adminOrder') &&
+            ($this->v177 || $this->registerHook('displayAdminOrder')) &&
+            (!$this->v177 || $this->registerHook('displayAdminOrderSide')) &&
             $this->registerHook('paymentReturn') &&
             $this->registerHook('PDFInvoice') &&
             $this->registerHook('postUpdateOrderStatus') &&
-            (!$this->v17 || $this->registerHook('paymentOptions'));
+            (!$this->v17 || $this->registerHook('paymentOptions')) &&
+            (!$this->v17 || $this->registerHook('displayExpressCheckout')) &&
+            ($this->v17 || $this->registerHook('shoppingCartExtra'));
     }
 
     public function uninstall()
@@ -125,15 +106,25 @@ class QuickPay extends PaymentModule
             Configuration::deleteByName('_QUICKPAY_HIDE_IMAGES');
     }
 
+    public function getConf($name)
+    {
+        if (isset($this->orderShopId)) {
+            $conf = Configuration::get($name, null, null, $this->orderShopId);
+        } else {
+            $conf = Configuration::get($name);
+        }
+        return $conf;
+    }
+
     public function getSetup()
     {
         $this->setup_vars = array(
             array('_QUICKPAY_MERCHANT_ID', 'merchant_id',
-                $this->l('Quickpay merchant ID'), '', ''),
+                sprintf($this->l('%s merchant ID'), 'QuickPay'), '', ''),
             array('_QUICKPAY_PRIVATE_KEY', 'private_key',
-                $this->l('Quickpay private key'), '', ''),
+                sprintf($this->l('%s private key'), 'QuickPay'), '', ''),
             array('_QUICKPAY_USER_KEY', 'user_key',
-                $this->l('Quickpay user key'), '', ''),
+                sprintf($this->l('%s user key'), 'QuickPay'), '', ''),
             array('_QUICKPAY_ORDER_PREFIX', 'orderprefix',
                 $this->l('Order prefix'), '000', ''),
             array('_QUICKPAY_GA_CLIENT_ID', 'ga_client_id',
@@ -147,7 +138,9 @@ class QuickPay extends PaymentModule
             array('_QUICKPAY_COMBINE', 'combine',
                 $this->l('Creditcards combined window'), 0, ''),
             array('_QUICKPAY_AUTOGET', 'autoget',
-                $this->l('Cards in payment window controlled by QuickPay'), 0, ''),
+                sprintf($this->l('Cards in payment window controlled by %s'), 'QuickPay'), 0, ''),
+            array('_QUICKPAY_MOBILEPAY_CHECKOUT', 'mobilepaycheckout',
+                $this->l('Add button for MobilePay Checkout'), 0, ''),
             array('_QUICKPAY_AUTOFEE', 'autofee',
                 $this->l('Customer pays the card fee'), 0, ''),
             array('_QUICKPAY_API', 'api',
@@ -155,63 +148,74 @@ class QuickPay extends PaymentModule
             array('_QUICKPAY_SHOWCARDS', 'showcards',
                 $this->l('Show card logos in left column'), 1, ''),
             array('_QUICKPAY_SHOWCARDSFOOTER', 'showcardsfooter',
-                    $this->l('Show card logos in footer'), 1, ''),
+                $this->l('Show card logos in footer'), 1, ''),
             array('_QUICKPAY_AUTOCAPTURE', 'autocapture',
-                    $this->l('Auto-capture payments'), 0, ''),
+                $this->l('Auto-capture payments'), 0, ''),
             array('_QUICKPAY_STATECAPTURE', 'statecapture',
-                    $this->l('Capture payments in state'), 0, ''),
+                $this->l('Capture payments in state'), 0, ''),
             array('_QUICKPAY_BRANDING', 'branding',
-                    $this->l('Branding in payment window'), 0, ''),
+                $this->l('Branding in payment window'), 0, ''),
             array('_QUICKPAY_FEE_TAX', 'feetax',
-                    $this->l('Tax for card fee'), 0, ''),
+                $this->l('Tax for card fee'), 0, ''),
+            array('_QUICKPAY_CMS_ID', 'cmsid',
+                $this->l('Info page for MobilePay Checkout'), 0, ''),
             array('_QUICKPAY_VIABILL', 'viabill',
-                    $this->l('ViaBill - buy now, pay whenever you want'), 0, 'viabill'),
+                $this->l('ViaBill - buy now, pay whenever you want'), 0, 'viabill'),
             array('_QUICKPAY_DK', 'dk',
-                    $this->l('Dankort'), 0, 'dankort'),
+                $this->l('Dankort'), 0, 'dankort'),
             array('_QUICKPAY_VISA', 'visa',
-                    $this->l('Visa card'), 0, 'visa,visa-dk'),
+                $this->l('Visa card'), 0, 'visa,visa-dk'),
             array('_QUICKPAY_VELECTRON', 'visaelectron',
-                    $this->l('Visa Electron'), 0, 'visa-electron,visa-electron-dk'),
+                $this->l('Visa Electron'), 0, 'visa-electron,visa-electron-dk'),
             array('_QUICKPAY_MASTERCARD', 'mastercard',
-                    $this->l('MasterCard'), 0, 'mastercard,mastercard-dk'),
+                $this->l('MasterCard'), 0, 'mastercard,mastercard-dk'),
             array('_QUICKPAY_MASTERCARDDEBET', 'mastercarddebet',
-                    $this->l('MasterCard Debet'), 0, 'mastercard-debet-dk'),
+                $this->l('MasterCard Debet'), 0, 'mastercard-debet,mastercard-debet-dk'),
             array('_QUICKPAY_A_EXPRESS', 'express',
-                    $this->l('American Express'), 0, 'american-express,american-express-dk'),
+                $this->l('American Express'), 0, 'american-express,american-express-dk'),
             array('_QUICKPAY_MOBILEPAY', 'mobilepay',
-                    $this->l('MobilePay'), 0, 'mobilepay'),
+                $this->l('MobilePay'), 0, 'mobilepay'),
             array('_QUICKPAY_SWISH', 'swish',
-                    $this->l('Swish'), 0, 'swish'),
+                $this->l('Swish'), 0, 'swish'),
             array('_QUICKPAY_KLARNA', 'klarna',
-                    $this->l('Klarna'), 0, 'klarna'),
+                $this->l('Klarna'), 0, 'klarna-payments'),
             array('_QUICKPAY_FORBRUGS_1886', 'f1886',
-                    $this->l('Forbrugsforeningen af 1886'), 0, 'fbg1886'),
+                $this->l('Forbrugsforeningen af 1886'), 0, 'fbg1886'),
             array('_QUICKPAY_DINERS', 'diners',
-                    $this->l('Diners Club'), 0, 'diners,diners-dk'),
+                $this->l('Diners Club'), 0, 'diners,diners-dk'),
             array('_QUICKPAY_JCB', 'jcb',
-                    $this->l('JCB'), 0, 'jcb'),
+                $this->l('JCB'), 0, 'jcb'),
+            array('_QUICKPAY_DK_3D', 'dk_3d',
+                $this->l('Dankort (3D)'), 0, '3d-dankort'),
             array('_QUICKPAY_VISA_3D', 'visa_3d',
-                    $this->l('Visa card (3D)'), 0, '3d-visa,3d-visa-dk'),
+                $this->l('Visa card (3D)'), 0, '3d-visa,3d-visa-dk'),
             array('_QUICKPAY_VELECTRON_3D', 'visaelectron_3d',
-                    $this->l('Visa Electron (3D)'), 0, '3d-visa-electron,3d-visa-electron-dk'),
+                $this->l('Visa Electron (3D)'), 0, '3d-visa-electron,3d-visa-electron-dk'),
             array('_QUICKPAY_MASTERCARD_3D', 'mastercard_3d',
-                    $this->l('MasterCard (3D)'), 0, '3d-mastercard,3d-mastercard-dk'),
+                $this->l('MasterCard (3D)'), 0, '3d-mastercard,3d-mastercard-dk'),
             array('_QUICKPAY_MASTERCARDDEBET_3D', 'mastercarddebet_3d',
-                    $this->l('MasterCard Debet (3D)'), 0, '3d-mastercard-debet-dk'),
+                $this->l('MasterCard Debet (3D)'), 0, '3d-mastercard-debet,3d-mastercard-debet-dk'),
             array('_QUICKPAY_MAESTRO_3D', 'maestro_3d',
-                    $this->l('Maestro (3D)'), 0, '3d-maestro,3d-maestro-dk'),
+                $this->l('Maestro (3D)'), 0, '3d-maestro,3d-maestro-dk'),
             array('_QUICKPAY_JCB_3D', 'jcb_3d',
-                    $this->l('JCB (3D)'), 0, '3d-jcb'),
-            array('_QUICKPAY_PAYEX', 'payex',
-                    $this->l('PayEx'), 0, 'creditcard'),
-            array('_QUICKPAY_DANSKE', 'danske',
-                    $this->l('Danske'), 0, 'danske-dk'),
-            array('_QUICKPAY_NORDEA', 'nordea',
-                    $this->l('Nordea'), 0, 'nordea-dk'),
+                $this->l('JCB (3D)'), 0, '3d-jcb'),
             array('_QUICKPAY_PAYPAL', 'paypal',
-                    $this->l('PayPal'), 0, 'paypal'),
+                $this->l('PayPal'), 0, 'paypal'),
             array('_QUICKPAY_SOFORT', 'sofort',
-                    $this->l('Sofort'), 0, 'sofort'));
+                $this->l('Sofort'), 0, 'sofort'),
+            array('_QUICKPAY_APPLEPAY', 'applepay',
+                $this->l('Apple Pay'), 0, 'apple-pay'),
+            array('_QUICKPAY_GOOGLE_PAY', 'googlepay',
+                $this->l('Google Pay'), 0, 'google-pay'),
+            array('_QUICKPAY_BITCOIN', 'bitcoin',
+                $this->l('Bitcoin'), 0, 'bitcoin'),
+            array('_QUICKPAY_VIPPS', 'vipps',
+                $this->l('Vipps'), 0, 'vipps'),
+            array('_QUICKPAY_RESURS', 'resurs',
+                $this->l('Resurs Bank'), 0, 'resurs'),
+            array('_QUICKPAY_ANYDAYSPLIT', 'anydaysplit',
+                $this->l('ANYDAY Split'), 0, 'anyday-split')
+        );
         $this->setup = new StdClass();
         $this->setup->lock_names = array();
         $this->setup->card_type_locks = array();
@@ -253,15 +257,36 @@ class QuickPay extends PaymentModule
         $this->setup->auto_ignore = array_keys($credit_cards2d);
         array_pop($this->setup->auto_ignore);
         $setup_vars = $this->sortSetup();
-        $autoget = Configuration::get('_QUICKPAY_AUTOGET');
-        $combine = Configuration::get('_QUICKPAY_COMBINE');
+        $autoget = $this->getConf('_QUICKPAY_AUTOGET');
+        $combine = $this->getConf('_QUICKPAY_COMBINE');
         foreach ($setup_vars as $setup_var) {
             $vars = $this->varsObj($setup_var);
             $field = $vars->var_name;
-            $this->setup->$field = Configuration::get($vars->glob_name);
+            $this->setup->$field = $this->getConf($vars->glob_name);
             $this->setup->card_texts[$vars->var_name] = $vars->card_text;
-            if ($vars->var_name == 'maestro_3d') {
+            if ($field == 'maestro_3d') {
                 $this->setup->card_texts['maestro'] = $this->l('Maestro');
+            }
+            elseif ($field == 'statecapture') {
+                // Backwards compatibility
+                $capture_state2 = Configuration::get('_QUICKPAY_STATECAPTURE2');
+                $capture_state3 = Configuration::get('_QUICKPAY_STATECAPTURE3');
+                if ($capture_state2 || $capture_state3) {
+                    $ids = array();
+                    if ($this->setup->$field) {
+                        $ids[] = $this->setup->$field;
+                    }
+                    if ($capture_state2) {
+                        $ids[] = $capture_state2;
+                    }
+                    if ($capture_state3) {
+                        $ids[] = $capture_state3;
+                    }
+                    $this->setup->$field = implode(',', $ids);
+                    Configuration::updateValue($vars->glob_name, $this->setup->$field);
+                    Configuration::updateValue('_QUICKPAY_STATECAPTURE2', 0);
+                    Configuration::updateValue('_QUICKPAY_STATECAPTURE3', 0);
+                }
             }
             if (in_array($vars->var_name, $all_cards)) {
                 if ($autoget && $combine) {
@@ -280,6 +305,9 @@ class QuickPay extends PaymentModule
                     }
                 }
             }
+        }
+        if ($this->setup->mobilepaycheckout) {
+            $this->setup->mobilepay = 1;
         }
         // $this->dump($this->setup->card_type_locks);
         return $this->setup;
@@ -335,36 +363,28 @@ class QuickPay extends PaymentModule
 
     public function getPageLink($name, $parm)
     {
-        if ($this->v15) {
-            $url = $this->context->link->getPageLink($name, true, null, $parm);
-        } else {
-            $url = Configuration::get('PS_SSL_ENABLED') ? 'https://' : 'http://';
-            $url .= $_SERVER['HTTP_HOST'].__PS_BASE_URI__.$name.'.php?'.$parm;
-        }
+        $url = $this->context->link->getPageLink($name, true, null, $parm);
         return $url;
     }
 
     public function getModuleLink($name, $parms = array())
     {
-        if ($this->v15) {
-            $url = $this->context->link->getModuleLink(
-                $this->name,
-                $name,
-                $parms,
-                true
-            );
-        } else {
-            $url = Configuration::get('PS_SSL_ENABLED') ? 'https://' : 'http://';
-            $url .= $_SERVER['HTTP_HOST'].$this->_path.$name.'.php';
-            if ($parms) {
-                $key_values = array();
-                foreach ($parms as $k => $v) {
-                    $key_values[] = $k.'='.$v;
-                }
-                $url .= '?'.implode('&', $key_values);
-            }
-        }
+        $url = $this->context->link->getModuleLink(
+            $this->name,
+            $name,
+            $parms,
+            true
+        );
         return $url;
+    }
+
+    public function addLog($message, $severity = 1, $error_code = null, $object_type = null, $object_id = null)
+    {
+        if ($this->v16) {
+            PrestaShopLogger::addLog($message, $severity, $error_code, $object_type, $object_id);
+        } else {
+            Logger::addLog($message, $severity, $error_code, $object_type, $object_id);
+        }
     }
 
     public function dump($var, $name = null)
@@ -420,11 +440,11 @@ class QuickPay extends PaymentModule
      */
     public function getContent()
     {
-        $this->checkLangFile();
         if (isset($this->warning)) {
             return $this->displayError($this->warning);
         }
 
+        $this->context->controller->addCSS($this->_path.'/views/css/front.css');
         if (isset($this->back_file) && !file_exists($this->back_file)) {
             $err = $this->l('This module requires the backward compatibility module.');
             if (!Module::isInstalled('backwardcompatibility')) {
@@ -445,33 +465,32 @@ class QuickPay extends PaymentModule
         }
         $this->getSetup();
         $this->postProcess();
-        if ($this->v15) {
-            if ($this->isRegisteredInHook(Hook::getIdByName('paymentTop'))) {
-                $this->unRegisterHook('paymentTop');
-            }
-            if (!$this->isRegisteredInHook(Hook::getIdByName('header'))) {
-                $this->registerHook('header');
-            }
-            $this->context->controller->addJqueryUI('ui.sortable');
-        } else {
-            // Old PrestaShop
-            require($this->local_path.'backward_compatibility/HelperForm.php');
-            $output .= '<script type="text/javascript" src="'.
-                $this->_path.'views/js/jquery-ui-1.9.0.custom.min.js"></script>';
+        if ($this->isRegisteredInHook(Hook::getIdByName('paymentTop'))) {
+            $this->unRegisterHook('paymentTop');
         }
+        if (!$this->isRegisteredInHook(Hook::getIdByName('header'))) {
+            $this->registerHook('header');
+        }
+        if ($this->v17 && !$this->isRegisteredInHook(Hook::getIdByName('displayExpressCheckout'))) {
+            $this->registerHook('displayExpressCheckout');
+        }
+        if (!$this->v17 && !$this->isRegisteredInHook(Hook::getIdByName('shoppingCartExtra'))) {
+            $this->registerHook('shoppingCartExtra');
+        }
+        if ($this->v177 && !$this->isRegisteredInHook(Hook::getIdByName('displayAdminOrderSide'))) {
+            $this->registerHook('displayAdminOrderSide');
+        }
+        $this->context->controller->addJqueryUI('ui.sortable');
         $output .= $this->displayErrors();
-        if (Tools::getValue('submitQuickPayModule') && !$this->post_errors) {
+        if (Tools::getValue($this->submitName) && !$this->post_errors) {
             $output .= '
-                <div class="conf confirm">
-                <img src="../img/admin/ok.gif" alt="'.$this->l('Confirmation').'" />
+                <div class="alert alert-success conf confirm">
                 '.$this->l('Settings updated').'
                 </div>';
         }
 
         $this->context->smarty->assign('module_dir', $this->_path);
-        $this->context->smarty->clearCompiledTemplate(
-            $this->local_path.'views/templates/hook/quickpay.tpl'
-        );
+        $this->context->smarty->clearCompiledTemplate();
 
         $output .= $this->context->smarty->fetch(
             $this->local_path.'views/templates/admin/configure.tpl'
@@ -503,31 +522,18 @@ class QuickPay extends PaymentModule
         }
 
         $helper->identifier = $this->identifier;
-        $helper->submit_action = 'submitQuickPayModule';
-        if ($this->v15) {
-            $helper->currentIndex =
-                $this->context->link->getAdminLink('AdminModules', false).
-                '&configure='.$this->name.
-                '&tab_module='.$this->tab.
-                '&module_name='.$this->name;
-            $helper->token = Tools::getAdminTokenLite('AdminModules');
-            $helper->tpl_vars = array(
-                    'fields_value' => $this->getConfigFormValues(),
-                    'languages' => $this->context->controller->getLanguages(),
-                    'id_language' => $this->context->language->id,
-                    );
-        } else {
-            $helper->currentIndex = 'index.php?tab='.Tools::getValue('tab').
-                '&configure='.Tools::getValue('configure').
-                '&tab_module='.Tools::getValue('tab_module').
-                '&module_name='.Tools::getValue('module_name');
-            $helper->token = Tools::getValue('token');
-            $helper->tpl_vars = array(
-                    'fields_value' => $this->getConfigFormValues(),
-                    'languages' => Language::getLanguages(),
-                    'id_language' => $this->context->language->id,
-                    );
-        }
+        $helper->submit_action = $this->submitName;
+        $helper->currentIndex =
+            $this->context->link->getAdminLink('AdminModules', false).
+            '&configure='.$this->name.
+            '&tab_module='.$this->tab.
+            '&module_name='.$this->name;
+        $helper->token = Tools::getAdminTokenLite('AdminModules');
+        $helper->tpl_vars = array(
+                'fields_value' => $this->getConfigFormValues(),
+                'languages' => $this->context->controller->getLanguages(),
+                'id_language' => $this->context->language->id,
+                );
 
         $out = $helper->generateForm(array($this->getConfigSettings()));
         if (!$this->v16) {
@@ -578,10 +584,8 @@ class QuickPay extends PaymentModule
 
         if ($this->v16) {
             return $this->display(__FILE__, 'list.tpl');
-        } elseif ($this->v15) {
-            return $this->display(__FILE__, 'list15.tpl');
         } else {
-            return $this->display(__FILE__, 'views/templates/hook/list15.tpl');
+            return $this->display(__FILE__, 'list15.tpl');
         }
     }
 
@@ -591,38 +595,39 @@ class QuickPay extends PaymentModule
             $vars->var_name != 'orderprefix' &&
             $vars->var_name != 'statecapture' &&
             $vars->var_name != 'branding' &&
-            $vars->var_name != 'feetax';
+            $vars->var_name != 'feetax' &&
+            $vars->var_name != 'cmsid';
     }
 
     protected function getConfigInput15($vars)
     {
         if ($this->useCheckBox($vars)) {
             $input = array(
-                    'type' => 'select',
-                    'name' => $vars->glob_name,
-                    'label' => $vars->card_text,
-                    'options' => array(
-                        'query' =>  array(
-                            array(
-                                'id' => '0',
-                                'name' => $this->l('No')
-                                ),
-                            array(
-                                'id' => '1',
-                                'name' => $this->l('Yes')
-                                )
-                            ),
-                        'id' => 'id',
-                        'name' => 'name'
+                'type' => 'select',
+                'name' => $vars->glob_name,
+                'label' => $vars->card_text,
+                'options' => array(
+                    'query' =>  array(
+                        array(
+                            'id' => '0',
+                            'name' => $this->l('No')
+                        ),
+                        array(
+                            'id' => '1',
+                            'name' => $this->l('Yes')
                         )
-                    );
+                    ),
+                    'id' => 'id',
+                    'name' => 'name'
+                )
+            );
         } else {
             $input = array(
-                    'size' => strpos($vars->var_name, '_key') === false ? 10 : 60,
-                    'type' => 'text',
-                    'name' => $vars->glob_name,
-                    'label' => $vars->card_text
-                    );
+                'size' => strpos($vars->var_name, '_key') === false ? 10 : 60,
+                'type' => 'text',
+                'name' => $vars->glob_name,
+                'label' => $vars->card_text
+            );
         }
         return $input;
     }
@@ -634,29 +639,29 @@ class QuickPay extends PaymentModule
         }
         if ($this->useCheckBox($vars)) {
             $input = array(
-                    'type' => 'switch',
-                    'name' => $vars->glob_name,
-                    'label' => $vars->card_text,
-                    'values' => array(
-                        array(
-                            'id' => 'on',
-                            'value' => '1',
-                            'label' => $this->l('Yes'),
-                            ),
-                        array(
-                            'id' => 'off',
-                            'value' => '0',
-                            'label' => $this->l('No'),
-                            )
-                        )
-                    );
+                'type' => 'switch',
+                'name' => $vars->glob_name,
+                'label' => $vars->card_text,
+                'values' => array(
+                    array(
+                        'id' => 'on',
+                        'value' => '1',
+                        'label' => $this->l('Yes'),
+                    ),
+                    array(
+                        'id' => 'off',
+                        'value' => '0',
+                        'label' => $this->l('No'),
+                    )
+                )
+            );
         } else {
             $input = array(
-                    'col' => strpos($vars->var_name, '_key') === false ? 3 : 6,
-                    'type' => 'text',
-                    'name' => $vars->glob_name,
-                    'label' => $vars->card_text
-                    );
+                'col' => strpos($vars->var_name, '_key') === false ? 3 : 6,
+                'type' => 'text',
+                'name' => $vars->glob_name,
+                'label' => $vars->card_text
+            );
         }
         if ($vars->var_name == 'statementtext') {
             $input['desc'] = $this->l('Max. 22 ASCII characters. Only for Clearhaus.');
@@ -668,23 +673,28 @@ class QuickPay extends PaymentModule
     {
         $order_states = OrderState::getOrderStates($this->context->language->id);
         $query = array();
-        $query[] = array('id' => 0,  'name' => $this->l('Never'));
         foreach ($order_states as $order_state) {
             $query[] = array(
-                    'id' => $order_state['id_order_state'],
-                    'name' => $order_state['name']
-                    );
+                'id' => $order_state['id_order_state'],
+                'name' => $order_state['name']
+            );
         }
         $input = array(
-                'type' => 'select',
-                'name' => $vars->glob_name,
-                'label' => $vars->card_text,
-                'options' => array(
-                    'query' =>  $query,
-                    'id' => 'id',
-                    'name' => 'name'
-                    )
-                );
+            'type' => 'checkbox',
+            'name' => $vars->glob_name,
+            'label' => $vars->card_text,
+            'values' => array(
+                'query' => $query,
+                'id' => 'id',
+                'name' => 'name'
+            ),
+            'expand' => array(
+                'print_total' => count($query),
+                'default' => 'show',
+                'show' => array('text' => $this->l('show'), 'icon' => 'plus-sign-alt'),
+                'hide' => array('text' => $this->l('hide'), 'icon' => 'minus-sign-alt')
+            ),
+        );
         return $input;
     }
 
@@ -698,20 +708,20 @@ class QuickPay extends PaymentModule
         $query[] = array('id' => 0,  'name' => $this->l('Standard'));
         foreach ($brandings as $id => $name) {
             $query[] = array(
-                    'id' => $id,
-                    'name' => $name
-                    );
+                'id' => $id,
+                'name' => $name
+            );
         }
         $input = array(
-                'type' => 'select',
-                'name' => $vars->glob_name,
-                'label' => $vars->card_text,
-                'options' => array(
-                    'query' =>  $query,
-                    'id' => 'id',
-                    'name' => 'name'
-                    )
-                );
+            'type' => 'select',
+            'name' => $vars->glob_name,
+            'label' => $vars->card_text,
+            'options' => array(
+                'query' =>  $query,
+                'id' => 'id',
+                'name' => 'name'
+            )
+        );
         return $input;
     }
 
@@ -725,20 +735,44 @@ class QuickPay extends PaymentModule
         $query = array();
         foreach ($taxes as $id => $name) {
             $query[] = array(
-                    'id' => $id,
-                    'name' => $name
-                    );
+                'id' => $id,
+                'name' => $name
+            );
         }
         $input = array(
-                'type' => 'select',
-                'name' => $vars->glob_name,
-                'label' => $vars->card_text,
-                'options' => array(
-                    'query' =>  $query,
-                    'id' => 'id',
-                    'name' => 'name'
-                    )
-                );
+            'type' => 'select',
+            'name' => $vars->glob_name,
+            'label' => $vars->card_text,
+            'options' => array(
+                'query' => $query,
+                'id' => 'id',
+                'name' => 'name'
+            )
+        );
+        return $input;
+    }
+
+    protected function getCmsIdInput($vars)
+    {
+        $query = array();
+        $query[] = array('id' => 0,  'name' => $this->l('None'));
+        $cmsPages = CMS::getCMSPages($this->context->language->id);
+        foreach ($cmsPages as $cmsPage) {
+            $query[] = array(
+                'id' => $cmsPage['id_cms'],
+                'name' => $cmsPage['meta_title']
+            );
+        }
+        $input = array(
+            'type' => 'select',
+            'name' => $vars->glob_name,
+            'label' => $vars->card_text,
+            'options' => array(
+                'query' =>  $query,
+                'id' => 'id',
+                'name' => 'name'
+            )
+        );
         return $input;
     }
 
@@ -762,19 +796,24 @@ class QuickPay extends PaymentModule
                 $inputs[] = $this->getFeeTaxInput($vars);
                 continue;
             }
+            if ($vars->var_name == 'cmsid') {
+                $inputs[] = $this->getCmsIdInput($vars);
+                continue;
+            }
             $inputs[] = $this->getConfigInput($vars);
         }
+
         $submit = array(
-                'title' => $this->l('Save'),
-                );
+            'title' => $this->l('Save'),
+        );
         $form = array(
-                'legend' => array(
-                    'title' => $this->l('Settings'),
-                    'icon' => 'icon-cogs',
-                    ),
-                'input' => $inputs,
-                'submit' => $submit,
-                );
+            'legend' => array(
+                'title' => $this->l('Settings'),
+                'icon' => 'icon-cogs',
+            ),
+            'input' => $inputs,
+            'submit' => $submit,
+        );
         return array('form' => $form);
     }
 
@@ -787,6 +826,11 @@ class QuickPay extends PaymentModule
             $field = $vars->var_name;
             if ($this->useCheckBox($vars)) {
                 $values[$vars->glob_name] = $setup->$field ? 1 : 0;
+            } elseif ($vars->var_name == 'statecapture') {
+                $ids = explode(',', $setup->$field);
+                foreach ($ids as $id) {
+                    $values[$vars->glob_name.'_'.$id] = true;
+                }
             } else {
                 $values[$vars->glob_name] = $setup->$field;
             }
@@ -817,10 +861,22 @@ class QuickPay extends PaymentModule
             $this->updateCardsPosition();
             exit;
         }
-        if (Tools::getValue('submitQuickPayModule')) {
+        if (Tools::getValue($this->submitName)) {
             foreach ($this->setup_vars as $setup_var) {
                 $vars = $this->varsObj($setup_var);
                 if ($vars->card_type_lock) {
+                    continue;
+                }
+                if ($vars->var_name == 'statecapture') {
+                    $values = array();
+                    $order_states = OrderState::getOrderStates($this->context->language->id);
+                    foreach ($order_states as $order_state) {
+                        $id = $order_state['id_order_state'];
+                        if (Tools::getValue($vars->glob_name.'_'.$id)) {
+                            $values[] = $id;
+                        }
+                    }
+                    Configuration::updateValue($vars->glob_name, implode(',', $values));
                     continue;
                 }
                 if (Tools::getValue($vars->glob_name, null) !== null) {
@@ -851,8 +907,11 @@ class QuickPay extends PaymentModule
             $data = $this->doCurl('payments', array(), 'POST');
             $vars = $this->jsonDecode($data);
             if ($vars->message == 'Invalid API key') {
-                $this->post_errors[] = $this->l('Invalid Quickpay user key. Check the key at').
-                    ' <a href="https://manage.quickpay.net">https://manage.quickpay.net</a>.';
+                $this->post_errors[] = sprintf(
+                    $this->l('Invalid %1$s user key. Check the key at %2$s.'),
+                    'QuickPay',
+                    '<a href="https://manage.quickpay.net">https://manage.quickpay.net</a>'
+                );
             } elseif ($setup->autofee) {
                 $fees = $this->getFees(100);
                 if (!$fees) {
@@ -871,20 +930,19 @@ class QuickPay extends PaymentModule
 
     public function jsonDecode($data)
     {
-        if ($this->v15) {
-            return Tools::jsonDecode($data);
-        } else {
-            return call_user_func('json_decode', $data);
-        }
+        return Tools::jsonDecode($data);
     }
 
-    public function getCurlHandle($resource, $fields = null, $method = null)
+    public function getCurlHandle($resource, $fields = null, $method = null, $callback_url = null)
     {
         $ch = curl_init();
         $header = array();
         $header[] = 'Authorization: Basic '.
             call_user_func('base64_encode', ':'.$this->setup->user_key);
         $header[] = 'Accept-Version: v10';
+        if ($callback_url) {
+            $header[] = 'QuickPay-Callback-Url: '.$callback_url;
+        }
         $url = 'https://api.quickpay.net/'.$resource;
         if ($method == null) {
             if ($fields) {
@@ -906,9 +964,9 @@ class QuickPay extends PaymentModule
         return $ch;
     }
 
-    public function doCurl($resource, $fields = null, $method = null)
+    public function doCurl($resource, $fields = null, $method = null, $callback_url = null)
     {
-        $ch = $this->getCurlHandle($resource, $fields, $method);
+        $ch = $this->getCurlHandle($resource, $fields, $method, $callback_url);
         $data = curl_exec($ch);
         if (!$data) {
             $this->qp_error = curl_error($ch);
@@ -999,6 +1057,7 @@ class QuickPay extends PaymentModule
     {
         $ordering_list = array();
         $hide_images_list = $this->imagesSetup();
+        $browser = Tools::getUserBrowser();
         foreach ($setup_vars as $setup_var) {
             $vars = $this->varsObj($setup_var);
             $var_name = $vars->var_name;
@@ -1009,8 +1068,25 @@ class QuickPay extends PaymentModule
             if ($setup->autoget && in_array($var_name, $setup->auto_ignore)) {
                 continue;
             }
+            if ($field == 'googlepay' &&
+                empty($this->qpPreview) &&
+                $browser != 'Google Chrome') {
+                continue;
+            }
+            if ($field == 'applepay' &&
+                empty($this->qpPreview) &&
+                $browser != 'Apple Safari') {
+                continue;
+            }
             if (!in_array($var_name, $ordering_list) && empty($hide_images_list[$var_name])) {
-                $ordering_list[] = $var_name;
+                $img = $var_name;
+                if ($var_name == 'unzer') {
+                    $language = new Language($this->context->language->id);
+                    if ($language->iso_code == 'de') {
+                        $img .= '_de';
+                    }
+                }
+                $ordering_list[] = $img;
             }
             if (isset($setup->secure_list[$var_name]) && empty($hide_images_list[$var_name.'_secure'])) {
                 $ordering_list[] = $setup->secure_list[$var_name];
@@ -1088,6 +1164,18 @@ class QuickPay extends PaymentModule
         );
         if (isset($iso3[$iso_code])) {
             return $iso3[$iso_code];
+        } else {
+            return $iso_code;
+        }
+    }
+
+    public function getIso2($iso_code)
+    {
+        $iso2 = array(
+            'DNK' => 'DK', 'FIN' => 'FI', 'GRL' => 'GL'
+        );
+        if (isset($iso2[$iso_code])) {
+            return $iso2[$iso_code];
         } else {
             return $iso_code;
         }
@@ -1179,6 +1267,10 @@ class QuickPay extends PaymentModule
         } else {
             $this->context->controller->addCSS($this->_path.'/views/css/front15.css');
         }
+        if ($this->getConf('_QUICKPAY_MOBILEPAY_CHECKOUT')) {
+            $this->context->controller->addJqueryUI('ui.dialog');
+            $this->context->controller->addJS($this->_path.'views/js/mobilepay.js');
+        }
     }
 
     public function hookPaymentTop()
@@ -1206,32 +1298,43 @@ class QuickPay extends PaymentModule
             $invoice_street .= ' '.$invoice_address->address2;
         }
         $country = new Country($invoice_address->id_country);
-        $invoice_country = $this->getIso3($country->iso_code);
+        if ($invoice_address->id) {
+            $invoice_country_code = $this->getIso3($country->iso_code);
+        } else {
+            $invoice_country_code = 'DNK';
+        }
         $delivery_address = new Address((int)$cart->id_address_delivery);
         $delivery_street = $delivery_address->address1;
         if ($delivery_address->address2) {
             $delivery_street .= ' '.$delivery_address->address2;
         }
-        $country = new Country($delivery_address->id_country);
         $customer = new Customer((int)$cart->id_customer);
+        if ($customer->secure_key) {
+            $key2 = 0;
+        } else {
+            $key2 = 1;
+            $customer->secure_key = md5(uniqid(rand(), true));
+        }
         $id_currency = (int)$cart->id_currency;
         $currency = new Currency((int)$id_currency);
 
         $language = new Language($this->context->language->id);
         $cart_total = $this->toQpAmount($cart->getOrderTotal(), $currency);
-        if (isset($cart->qpPreview)) {
+        if (isset($this->qpPreview)) {
             $cart_total = 10000;
         }
         $continueurl = $this->getModuleLink(
             'complete',
             array(
                 'key' => $customer->secure_key,
+                'key2' => $key2,
                 'id_cart' => (int)$cart->id,
                 'id_module' => (int)$this->id,
                 'utm_nooverride' => 1
             )
         );
         $cancelurl = $this->getPageLink('order', 'step=3');
+        $callbackurl = $this->getModuleLink('validation');
         $payment_url = $this->getModuleLink('payment');
         $html = '';
 
@@ -1243,10 +1346,10 @@ class QuickPay extends PaymentModule
 
         $order_id = $setup->orderprefix.(int)$cart->id;
         $done = false;
+        $browser = Tools::getUserBrowser();
         $setup_vars = $this->sortSetup();
-        $id_option = 0;
         foreach ($setup_vars as $setup_var) {
-            $id_option++;
+            $id_option = $setup_var[1];
             if ($select_option && $id_option != $select_option) {
                 continue;
             }
@@ -1273,20 +1376,40 @@ class QuickPay extends PaymentModule
                     $card_type_lock = '';
             }
             if ($vars->var_name == 'mobilepay' &&
-                empty($cart->qpPreview) &&
-                $invoice_country != 'DNK' &&
-                $invoice_country != 'NOR' &&
-                $invoice_country != 'FIN') {
+                empty($this->qpPreview) &&
+                $invoice_country_code != 'DNK' &&
+                $invoice_country_code != 'GRL' &&
+                $invoice_country_code != 'FIN') {
                 continue;
             }
             if ($vars->var_name == 'swish' &&
-                empty($cart->qpPreview) &&
-                $invoice_country != 'SWE') {
+                empty($this->qpPreview) &&
+                $invoice_country_code != 'SWE') {
+                continue;
+            }
+            if ($vars->var_name == 'vipps' &&
+                empty($this->qpPreview) &&
+                $invoice_country_code != 'NOR') {
+                continue;
+            }
+            if ($vars->var_name == 'anydaysplit' &&
+                empty($this->qpPreview) &&
+                $invoice_country_code != 'DNK') {
+                continue;
+            }
+            if ($vars->var_name == 'googlepay' &&
+                empty($this->qpPreview) &&
+                $browser != 'Google Chrome') {
+                continue;
+            }
+            if ($vars->var_name == 'applepay' &&
+                empty($this->qpPreview) &&
+                $browser != 'Apple Safari') {
                 continue;
             }
             if ($vars->var_name == 'viabill') {
-                if (empty($cart->qpPreview) &&
-                    $invoice_country != 'DNK') {
+                if (empty($this->qpPreview) &&
+                    $invoice_country_code != 'DNK') {
                     continue;
                 }
                 // Autofee does not work
@@ -1346,7 +1469,11 @@ class QuickPay extends PaymentModule
             $images_list = array();
             foreach ($card_list as $card) {
                 if (empty($hide_images_list[$card])) {
-                    $images_list[] = $card;
+                    $img = $card;
+                    if ($card == 'unzer' && $language->iso_code == 'de') {
+                        $img .= '_de';
+                    }
+                    $images_list[] = $img;
                 }
                 if (isset($setup->secure_list[$card]) && empty($hide_images_list[$card.'_secure'])) {
                     $images_list[] = $setup->secure_list[$card];
@@ -1359,6 +1486,7 @@ class QuickPay extends PaymentModule
                 'autocapture'       => $setup->autocapture,
                 'autofee'           => $autofee,
                 'branding_id'       => $branding,
+                'callback_url'      => $callbackurl,
                 'cancel_url'        => $cancelurl,
                 'continue_url'      => $continueurl,
                 'currency'          => $currency->iso_code,
@@ -1387,16 +1515,16 @@ class QuickPay extends PaymentModule
                 'module_dir'  => $this->_path
             );
             $smarty->assign($fields);
-            if ($this->v17 && empty($cart->qpPreview)) {
+            if ($this->v17 && empty($this->qpPreview)) {
                 $parms = array('option' => $id_option, 'order_id' => $order_id);
-                $tpl = 'module:quickpay/views/templates/hook/quickpay17.tpl';
+                $tpl = 'module:quickpay/views/templates/hook/payment17.tpl';
                 $newOption = new PrestaShop\PrestaShop\Core\Payment\PaymentOption();
                 $newOption->setCallToActionText($fields['text'])
                     ->setAction($this->getModuleLink('payment', $parms))
                     ->setAdditionalInformation($this->fetch($tpl));
                 $paymentOptions[] = $newOption;
             } else {
-                $html .= $this->display(__FILE__, 'views/templates/hook/quickpay.tpl');
+                $html .= $this->display(__FILE__, 'views/templates/hook/payment.tpl');
             }
         }
 
@@ -1409,8 +1537,8 @@ class QuickPay extends PaymentModule
         $paymentOptions = array();
         $cart = new Cart();
         $cart->id_currency = Configuration::get('PS_CURRENCY_DEFAULT');
-        $cart->qpPreview = true;
         $params['cart'] = $cart;
+        $this->qpPreview = true;
         $innerHtml = $this->makePayment($params, $paymentOptions);
         $innerHtml = str_replace('</a>', '', $innerHtml);
         $innerHtml = preg_replace('/<a [^>]*>/', '', $innerHtml);
@@ -1456,8 +1584,13 @@ class QuickPay extends PaymentModule
         }
 
         if ($ordering_list) {
-            $smarty->assign('ordering_list', $ordering_list);
-            return $this->display(__FILE__, 'views/templates/hook/leftquickpay.tpl');
+            $smarty->assign(
+                array(
+                    'ordering_list' => $ordering_list,
+                    'link' => $this->context->link
+                )
+            );
+            return $this->display(__FILE__, 'views/templates/hook/leftlogo.tpl');
         }
         return '';
     }
@@ -1480,8 +1613,13 @@ class QuickPay extends PaymentModule
         $ordering_list = $this->getOrderingList($setup, $setup_vars);
 
         if ($ordering_list) {
-            $smarty->assign('ordering_list', $ordering_list);
-            return $this->display(__FILE__, 'views/templates/hook/footerquickpay.tpl');
+            $smarty->assign(
+                array(
+                    'ordering_list' => $ordering_list,
+                    'link' => $this->context->link
+                )
+            );
+            return $this->display(__FILE__, 'views/templates/hook/footerlogo.tpl');
         }
         return '';
     }
@@ -1522,7 +1660,7 @@ class QuickPay extends PaymentModule
         if ($state == _PS_OS_ERROR_) {
             $status = 'callback';
             $msg = 'QuickPay: Confirmation failed';
-            Logger::addLog($msg, 2, 0, 'Order', $order->id);
+            $this->addLog($msg, 2, 0, 'Order', $order->id);
         } else {
             $status = 'ok';
         }
@@ -1532,17 +1670,31 @@ class QuickPay extends PaymentModule
             $this->smarty->assign('shop_name', Configuration::get('PS_SHOP_NAME'));
             $this->smarty->assign('base_dir_ssl', $url);
         }
+        $trans = Db::getInstance()->getRow(
+            'SELECT *
+            FROM '._DB_PREFIX_.'quickpay_execution
+            WHERE `id_cart` = '.$order->id_cart.'
+            ORDER BY `id_cart` ASC'
+        );
+        $json = $trans['json'];
+        $vars = $this->jsonDecode($json);
+        $query = parse_url($vars->link->continue_url, PHP_URL_QUERY);
+        parse_str($query, $args);
+        if ($args['key2']) {
+            $this->context->customer->mylogout();
+        }
         return $this->display(__FILE__, 'views/templates/hook/confirmation.tpl');
     }
 
-    public function hookAdminOrder($params)
+    public function hookDisplayAdminOrderSide($params)
     {
+        $order = new Order((int)$params['id_order']);
+        $this->orderShopId = $order->id_shop;
         $setup = $this->getSetup();
         if (!$setup->api) {
             return '';
         }
 
-        $order = new Order((int)$params['id_order']);
         $currency = new Currency((int)$order->id_currency);
         $module = Db::getInstance()->getRow(
             'SELECT `module`
@@ -1573,14 +1725,19 @@ class QuickPay extends PaymentModule
             $trans_id = $vars->id;
             $order_id = $vars->order_id;
         }
-        if ($this->v16) {
+        if ($this->v177) {
+            $html = '<div class="card"><div class="card-header">
+                <h3><img src="'.$this->_path.'logo.png" />
+                QuickPay</h3></div>
+                <div class="card-body">';
+        } elseif ($this->v16) {
             $html = '<div class="row"><div class="col-lg-5 panel">
-                <div class="panel-heading"><img src="'.$this->_path.'logo.gif" />
-                '.$this->l('Quickpay API').'</div>';
+                <div class="panel-heading"><img src="'.$this->_path.'logo.png" />
+                QuickPay '.$this->l('API').'</div>';
         } else {
             $html = '<br />
                 <fieldset>
-                <legend>'.$this->l('Quickpay API').'</legend>';
+                <legend>QuickPay '.$this->l('API').'</legend>';
         }
 
         $double_post = false;
@@ -1597,8 +1754,9 @@ class QuickPay extends PaymentModule
             $amount = Tools::getValue('acramount');
             $amount = $this->fromUserAmount($amount, $currency);
             $amount = $this->toQpAmount($amount, $currency);
+            $callbackurl = $this->getModuleLink('validation');
             $fields = array('amount='.$amount);
-            $action_data = $this->doCurl('payments/'.$trans_id.'/capture', $fields);
+            $action_data = $this->doCurl('payments/'.$trans_id.'/capture', $fields, 'POST', $callbackurl);
             // $html .= '<pre>'.print_r(json_decode($action_data), true).'</pre>';
         }
 
@@ -1655,7 +1813,7 @@ class QuickPay extends PaymentModule
         $html .= '<table>';
         $html .= '<tbody>';
         $html .= '<tr><th style="padding-right:10px">';
-        $html .= $this->l('Quickpay order ID:');
+        $html .= 'QuickPay '.$this->l('order ID:');
         $html .= '</th><td>';
         $html .= $order_id;
         if ($vars->test_mode) {
@@ -1699,7 +1857,7 @@ class QuickPay extends PaymentModule
                 'Y-m-d H:i:s',
                 strtotime($vars->created_at)
             ),
-            $this->context->language->id,
+            null,
             true
         );
         $html .= '</td></tr>';
@@ -1748,7 +1906,7 @@ class QuickPay extends PaymentModule
                     'Y-m-d H:i:s',
                     strtotime($operation->created_at)
                 ),
-                $this->context->language->id,
+                null,
                 true
             );
             $html .= '</td><td>';
@@ -1808,15 +1966,9 @@ class QuickPay extends PaymentModule
         $html .= '</tbody>';
         $html .= '</table>';
 
-        if ($this->v15) {
-            $url = 'index.php?controller='.Tools::getValue('controller');
-            $url .= '&id_order='.Tools::getValue('id_order');
-            $url .= '&vieworder&token='.Tools::getValue('token');
-        } else {
-            $url = 'index.php?tab='.Tools::getValue('tab');
-            $url .= '&id_order='.Tools::getValue('id_order');
-            $url .= '&vieworder&token='.Tools::getValue('token');
-        }
+        $url = 'index.php?controller='.Tools::getValue('controller');
+        $url .= '&id_order='.Tools::getValue('id_order');
+        $url .= '&vieworder&token='.Tools::getValue('token');
         $html .= '<br /><br />';
         if ($resttocap > 0) {
             $resttocap = $this->toUserAmount($resttocap, $currency);
@@ -1852,7 +2004,7 @@ class QuickPay extends PaymentModule
             $html .= '</form><br />';
         }
         $html .= '<a href="https://manage.quickpay.net" target="_blank" style="color: blue;">'.
-            $this->l('Quickpay manager').'</a>';
+            sprintf($this->l('%s manager'), 'QuickPay').'</a>';
         if ($this->v16) {
             $html .= '</div></div>';
         } else {
@@ -1861,16 +2013,19 @@ class QuickPay extends PaymentModule
         return $html;
     }
 
+    public function hookDisplayAdminOrder($params)
+    {
+        if ($this->v177) {
+            return '';
+        } else {
+            return $this->hookDisplayAdminOrderSide($params);
+        }
+    }
 
     public function hookPDFInvoice($params)
     {
-        if ($this->v15) {
-            $object = $params['object'];
-            $order = new Order((int)$object->id_order);
-        } else {
-            $pdf = $params['pdf'];
-            $order = new Order($params['id_order']);
-        }
+        $object = $params['object'];
+        $order = new Order((int)$object->id_order);
         $trans = Db::getInstance()->getRow(
             'SELECT *
             FROM '._DB_PREFIX_.'quickpay_execution
@@ -1880,46 +2035,23 @@ class QuickPay extends PaymentModule
         if (isset($trans['trans_id'])) {
             // $brand = $this->metadata->brand;
             $vars = $this->jsonDecode($trans['json']);
-            if ($this->v15) {
-                $html = '<table><tr>';
-                $html .= '<td style="width:100%; text-align:right">Quickpay transaction ID: '.
-                    $trans['trans_id'].'</td>';
-                $html .= '</tr></table>';
-                if (isset($vars->acquirer) && $vars->acquirer == 'viabill') {
-                    $html .= '<br/>';
-                    $html .='Det skyldige beløb kan alene betales med frigørende virkning til ViaBill, ';
-                    $html .= 'som fremsender særskilt opkrævning.';
-                    $html .= '<br/>';
-                    $html .= 'Betaling kan ikke ske ved modregning af krav, der udspringer af andre retsforhold.';
-                }
-                return $html;
-            } else {
-                $encoding = $pdf->encoding();
-                $old_str = Tools::iconv('utf-8', $encoding, $order->payment);
-                $new_str = Tools::iconv(
-                    'utf-8',
-                    $encoding,
-                    $order->payment.' TransID: '.$trans['trans_id']
-                );
-                $pdf->pages[1] = str_replace($old_str, $new_str, $pdf->pages[1]);
-                if (isset($vars->acquirer) && $vars->acquirer == 'viabill') {
-                    $pdf->Ln(14);
-                    $width = 165;
-                    $txt = Tools::iconv(
-                        'utf-8',
-                        $encoding,
-                        'Det skyldige beløb kan alene betales med frigørende virkning til ViaBill, '.
-                        'som fremsender særskilt opkrævning.'
-                    );
-                    $pdf->Cell($width, 3, $txt, 0, 2, 'L');
-                    $txt = Tools::iconv(
-                        'utf-8',
-                        $encoding,
-                        'Betaling kan ikke ske ved modregning af krav, der udspringer af andre retsforhold.'
-                    );
-                    $pdf->Cell($width, 3, $txt, 0, 2, 'L');
-                }
+            $html = '<table><tr>';
+            $html .= '<td style="width:100%; text-align:right">'.
+                sprintf(
+                    $this->l('%1$s transaction ID: %2$s'),
+                    'QuickPay',
+                    $trans['trans_id']
+                ).
+                '</td>';
+            $html .= '</tr></table>';
+            if (isset($vars->acquirer) && $vars->acquirer == 'viabill') {
+                $html .= '<br/>';
+                $html .='Det skyldige beløb kan alene betales med frigørende virkning til ViaBill, ';
+                $html .= 'som fremsender særskilt opkrævning.';
+                $html .= '<br/>';
+                $html .= 'Betaling kan ikke ske ved modregning af krav, der udspringer af andre retsforhold.';
             }
+            return $html;
         }
     }
 
@@ -1928,8 +2060,9 @@ class QuickPay extends PaymentModule
         $this->getSetup();
         $new_state = $params['newOrderStatus'];
         $order = new Order($params['id_order']);
-        $capture_statue = Configuration::get('_QUICKPAY_STATECAPTURE');
-        if ($capture_statue == $new_state->id) {
+        $capture_states = explode(',', Configuration::get('_QUICKPAY_STATECAPTURE'));
+        $cancelled = $new_state->id == _PS_OS_CANCELED_;
+        if (in_array($new_state->id, $capture_states) || $cancelled) {
             $trans = Db::getInstance()->getRow(
                 'SELECT *
                 FROM '._DB_PREFIX_.'quickpay_execution
@@ -1939,6 +2072,7 @@ class QuickPay extends PaymentModule
             if ($trans) {
                 $vars = $this->jsonDecode($trans['json']);
                 $amount = $this->getAmount($vars);
+                $callbackurl = $this->getModuleLink('validation');
                 if ($amount) {
                     $currency = new Currency((int)$order->id_currency);
                     $amount_order = $this->toQpAmount($order->total_paid, $currency);
@@ -1946,10 +2080,53 @@ class QuickPay extends PaymentModule
                         $amount = $amount_order;
                     }
                     $fields = array('amount='.$amount);
-                    $this->doCurl('payments/'.$trans['trans_id'].'/capture', $fields);
+                    if ($cancelled) {
+                        $this->doCurl('payments/'.$trans['trans_id'].'/cancel', null, 'POST');
+                    } else {
+                        $this->doCurl('payments/'.$trans['trans_id'].'/capture', $fields, 'POST', $callbackurl);
+                    }
                 }
             }
         }
+    }
+
+    public function hookDisplayExpressCheckout($params)
+    {
+        if (!$this->getConf('_QUICKPAY_MOBILEPAY_CHECKOUT')) {
+            return '';
+        }
+        $cart = $params['cart'];
+        $invoice_address = new Address((int)$cart->id_address_invoice);
+        $country = new Country($invoice_address->id_country);
+        if ($country->iso_code && !in_array($country->iso_code, array('DK', 'FI', 'GL'))) {
+            return '';
+        }
+        $prefix = $this->getConf('_QUICKPAY_ORDER_PREFIX');
+        $order_id = $prefix.(int)$cart->id;
+        $parms = array(
+            'option' => 'mobilepay',
+            'order_id' => $order_id,
+            'mobilepay_checkout' => 1
+        );
+        $payment_url = $this->getModuleLink('payment', $parms);
+        $mobilepay_url = $this->getModuleLink('mobilepay');
+        $id_cms = (int)$this->getConf('_QUICKPAY_CMS_ID');
+        $this->context->smarty->assign(
+            array(
+                'payment_url' => $payment_url,
+                'mobilepay_url' => $mobilepay_url,
+                'id_cms' => $id_cms
+            )
+        );
+        return $this->display(__FILE__, 'mobilepay.tpl');
+    }
+
+    public function hookShoppingCartExtra($params)
+    {
+        if ($this->v17) {
+            return '';
+        }
+        return $this->hookDisplayExpressCheckout($params);
     }
 
     public function sign($data, $key)
@@ -1966,8 +2143,9 @@ class QuickPay extends PaymentModule
     {
         $setup = $this->getSetup();
         $fields = array();
-        $id_option = (int)Tools::getValue('option');
+        $id_option = Tools::getValue('option');
         $order_id = Tools::getValue('order_id');
+        $mobilepay_checkout = Tools::getValue('mobilepay_checkout');
         $id_cart = (int)Tools::substr($order_id, 3);
         $cart = new Cart($id_cart);
         if ($id_option) {
@@ -1984,13 +2162,15 @@ class QuickPay extends PaymentModule
                 }
             }
         }
+        $delivery_address = new Address($cart->id_address_delivery);
+        $carrier = new Carrier($cart->id_carrier);
         $invoice_address = new Address((int)$cart->id_address_invoice);
         $invoice_street = $invoice_address->address1;
         if ($invoice_address->address2) {
             $invoice_street .= ' '.$invoice_address->address2;
         }
         $country = new Country($invoice_address->id_country);
-        $invoice_country = $this->getIso3($country->iso_code);
+        $invoice_country_code = $this->getIso3($country->iso_code);
         $delivery_address = new Address((int)$cart->id_address_delivery);
         $delivery_street = $delivery_address->address1;
         if ($delivery_address->address2) {
@@ -2002,32 +2182,51 @@ class QuickPay extends PaymentModule
         $currency = new Currency((int)$cart->id_currency);
         $info = array(
             'variables[module_version]' => $this->version,
+            'shopsystem[name]' => 'PrestaShop',
+            'shopsystem[version]' => $this->version,
             'customer_email' => $customer->email,
             'google_analytics_client_id' => $setup->ga_client_id,
-            'google_analytics_tracking_id' => $setup->ga_tracking_id,
-            'invoice_address[name]' => $invoice_address->firstname.' '.$invoice_address->lastname,
-            'invoice_address[street]' => $invoice_street,
-            'invoice_address[city]' => $invoice_address->city,
-            'invoice_address[zip_code]' => $invoice_address->postcode,
-            'invoice_address[country_code]' => $invoice_country,
-            'invoice_address[phone_number]' => $invoice_address->phone,
-            'invoice_address[mobile_number]' => $invoice_address->phone_mobile,
-            'invoice_address[vat_no]' => $invoice_address->vat_number,
-            'invoice_address[email]' => $customer->email,
-            'shipping_address[name]' => $delivery_address->firstname.' '.$delivery_address->lastname,
-            'shipping_address[street]' => $delivery_street,
-            'shipping_address[city]' => $delivery_address->city,
-            'shipping_address[zip_code]' => $delivery_address->postcode,
-            'shipping_address[country_code]' => $delivery_country,
-            'shipping_address[phone_number]' => $delivery_address->phone,
-            'shipping_address[mobile_number]' => $delivery_address->phone_mobile,
-            'shipping_address[vat_no]' => $delivery_address->vat_number,
-            'shipping_address[email]' => $customer->email
+            'google_analytics_tracking_id' => $setup->ga_tracking_id
         );
+        if ($mobilepay_checkout) {
+            $info += array(
+                'invoice_address_selection' => true,
+                'shipping_address_selection' => true
+            );
+        }
+        if ($invoice_address->id) {
+            $info += array(
+                'invoice_address[name]' => $invoice_address->firstname.' '.$invoice_address->lastname,
+                'invoice_address[street]' => $invoice_street,
+                'invoice_address[city]' => $invoice_address->city,
+                'invoice_address[zip_code]' => $invoice_address->postcode,
+                'invoice_address[country_code]' => $invoice_country_code,
+                'invoice_address[phone_number]' => $invoice_address->phone,
+                'invoice_address[mobile_number]' => $invoice_address->phone_mobile,
+                'invoice_address[vat_no]' => $invoice_address->vat_number,
+                'invoice_address[email]' => $customer->email,
+                'shipping_address[name]' => $delivery_address->firstname.' '.$delivery_address->lastname,
+                'shipping_address[street]' => $delivery_street,
+                'shipping_address[city]' => $delivery_address->city,
+                'shipping_address[zip_code]' => $delivery_address->postcode,
+                'shipping_address[country_code]' => $delivery_country,
+                'shipping_address[phone_number]' => $delivery_address->phone,
+                'shipping_address[mobile_number]' => $delivery_address->phone_mobile,
+                'shipping_address[vat_no]' => $delivery_address->vat_number,
+                'shipping_address[email]' => $customer->email
+            );
+        }
         foreach ($info as $k => $v) {
             $fields[] = $k.'='.urlencode($v);
         }
-        if (!in_array('payment_methods = paypal', $fields)) {
+        if (!in_array('payment_methods=paypal', $fields)) {
+            $info = array(
+                'shipping[amount]' => $this->toQpAmount($cart->getTotalShippingCost(), $currency),
+                'shipping[vat_rate]' => $carrier->getTaxesRate($delivery_address) / 100,
+            );
+            foreach ($info as $k => $v) {
+                $fields[] = $k.'='.urlencode($v);
+            }
             foreach ($cart->getProducts() as $product) {
                 $info = array(
                     'basket[][qty]' => $product['cart_quantity'],
@@ -2040,10 +2239,36 @@ class QuickPay extends PaymentModule
                     $fields[] = $k.'='.urlencode($v);
                 }
             }
+            $total_discounts = $cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS);
+            if ($total_discounts > 0) {
+                $info = array(
+                    'basket[][qty]' => 1,
+                    'basket[][item_no]' => 0,
+                    'basket[][item_name]' => $this->l('Discount', $this->name),
+                    'basket[][item_price]' => -$this->toQpAmount($total_discounts, $currency),
+                    'basket[][vat_rate]' => $product['rate'] / 100
+                );
+                foreach ($info as $k => $v) {
+                    $fields[] = $k.'='.urlencode($v);
+                }
+            }
+            $total_wrapping = $cart->getOrderTotal(true, Cart::ONLY_WRAPPING);
+            if ($total_wrapping > 0) {
+                $info = array(
+                    'basket[][qty]' => 1,
+                    'basket[][item_no]' => 0,
+                    'basket[][item_name]' => $this->l('Wrapping', $this->name),
+                    'basket[][item_price]' => $this->toQpAmount($total_wrapping, $currency),
+                    'basket[][vat_rate]' => $product['rate'] / 100
+                );
+                foreach ($info as $k => $v) {
+                    $fields[] = $k.'='.urlencode($v);
+                }
+            }
         }
         if (!Validate::isLoadedObject($cart)) {
             $msg = 'QuickPay: Payment error. Not a valid cart';
-            Logger::addLog($msg, 2, 0, 'Cart', $id_cart);
+            $this->addLog($msg, 2, 0, 'Cart', $id_cart);
             die('Not a valid cart');
         }
         Db::getInstance()->Execute(
@@ -2060,11 +2285,11 @@ class QuickPay extends PaymentModule
             if (isset($vars->message)) {
                 if (isset($saved_vars->message)) {
                     $msg = 'QuickPay: Payment error: '.$saved_vars->message;
-                    Logger::addLog($msg, 2, 0, 'Cart', $id_cart);
+                    $this->addLog($msg, 2, 0, 'Cart', $id_cart);
                     die($saved_vars->message);
                 } else {
                     $msg = 'QuickPay: Payment error: '.$vars->message;
-                    Logger::addLog($msg, 2, 0, 'Cart', $id_cart);
+                    $this->addLog($msg, 2, 0, 'Cart', $id_cart);
                     die($vars->message);
                 }
             }
@@ -2075,7 +2300,7 @@ class QuickPay extends PaymentModule
                 } else {
                     $msg = 'QuickPay: cURL error: '.$this->qp_error;
                 }
-                Logger::addLog($msg, 2, 0, 'Cart', $id_cart);
+                $this->addLog($msg, 2, 0, 'Cart', $id_cart);
                 die($msg);
             }
             $this->doCurl('payments/'.$vars->id, $fields, 'PATCH');
@@ -2089,7 +2314,7 @@ class QuickPay extends PaymentModule
         if ($vars->accepted) {
             // Already paid
             $msg = 'QuickPay: Payment notice: Already paid';
-            Logger::addLog($msg, 2, 0, 'Cart', $id_cart);
+            $this->addLog($msg, 2, 0, 'Cart', $id_cart);
             $paid_url = $this->getModuleLink(
                 'complete',
                 array(
@@ -2111,7 +2336,7 @@ class QuickPay extends PaymentModule
                 $vars->currency,
                 $currency->iso_code
             );
-            Logger::addLog($msg, 2, 0, 'Cart', $id_cart);
+            $this->addLog($msg, 2, 0, 'Cart', $id_cart);
             $cart->delete();
             $fail_url = $this->getModuleLink('fail', array('status' => 'currency'));
             Tools::redirect($fail_url, '');
@@ -2121,18 +2346,178 @@ class QuickPay extends PaymentModule
         $vars = $this->jsonDecode($json);
         if (isset($vars->message)) {
             $msg = 'QuickPay: Payment error: '.$vars->message;
-            Logger::addLog($msg, 2, 0, 'Cart', $id_cart);
+            $this->addLog($msg, 2, 0, 'Cart', $id_cart);
             die($vars->message);
         }
         Tools::redirect($vars->url, '');
     }
 
-    public function validate($json, $checksum, $id_order_state = _PS_OS_PAYMENT_)
+    public function mobilePay()
+    {
+        $cart = $this->context->cart;
+        $delivery_option = $cart->getDeliveryOption();
+        $carrier = new Carrier((int)reset($delivery_option));
+        $id_lang = (int)$cart->id_lang;
+        $prefix = $this->getConf('_QUICKPAY_ORDER_PREFIX');
+        $order_id = $prefix.(int)$cart->id;
+        $id_cms = (int)$this->getConf('_QUICKPAY_CMS_ID');
+        $links = CMS::getLinks(
+            Context::getContext()->language->id,
+            array($id_cms)
+        );
+        $link = reset($links);
+        if (isset($link['link'])) {
+            $mobilepay_link = $link['link'];
+        } else {
+            $mobilepay_link = '';
+        }
+        $parms = array(
+            'option' => 'mobilepay',
+            'order_id' => $order_id,
+            'mobilepay_checkout' => 1
+        );
+        $payment_url = $this->getModuleLink('payment', $parms);
+        $this->context->smarty->assign(
+            array(
+                'payment_url' => $payment_url,
+                'mobilepay_link' => $mobilepay_link,
+                'carrier_name' => $carrier->name,
+                'carrier_delay' => $carrier->delay[$id_lang]
+            )
+        );
+        print $this->display(__FILE__, 'mobilepay.tpl');
+        exit;
+    }
+
+    public function addCustomer($vars, &$cart)
+    {
+        $query = parse_url($vars->link->continue_url, PHP_URL_QUERY);
+        parse_str($query, $args);
+        if ($args['key2']) {
+            // New customer
+            $customer = new Customer();
+            $email = $vars->invoice_address->email;
+            if (!$customer->getByEmail($email)) {
+                // New customer
+                $customer->email = $email;
+                $name = explode(' ', $vars->invoice_address->name);
+                $customer->lastname = array_pop($name);
+                $customer->firstname = implode(' ', $name);
+                $customer->passwd = Tools::encrypt(Tools::passwdGen(MIN_PASSWD_LENGTH, 'RANDOM'));
+                $customer->is_guest = true;
+                $customer->add();
+            }
+        } else {
+            // Old customer
+            $customer = new Customer((int)$cart->id_customer);
+        }
+        $cart->secure_key = $customer->secure_key;
+        $cart->id_customer = $customer->id;
+        $cart->id_currency = Currency::getIdByIsoCode($vars->currency);
+        $phone_number = '';
+        if ($vars->invoice_address) {
+            $id_country = Country::getByIso($this->getIso2($vars->invoice_address->country_code));
+            $address1 = $vars->invoice_address->street;
+            $address1 .= ' '.$vars->invoice_address->house_number;
+            $alias = 'mobilepay';
+            if ($vars->invoice_address->house_extension) {
+                $address1 .= ' '.$vars->invoice_address->house_extension;
+            }
+            $row = Db::getInstance()->getRow(
+                'SELECT `id_address`
+                FROM '._DB_PREFIX_.'address
+                WHERE `alias` = "'.$alias.'"
+                AND `id_customer` = "'.$customer->id.'"'
+            );
+            if ($row) {
+                $address = new Address($row['id_address']);
+            } else {
+                $address = new Address();
+            }
+            $address->id_customer = $customer->id;
+            $address->lastname = $customer->lastname;
+            $address->firstname = $customer->firstname;
+            $address->alias = $alias;
+            $address->id_country = $id_country;
+            $address->company = $vars->invoice_address->company_name;
+            $address->vat_number = $vars->invoice_address->vat_no;
+            $address->address1 = $address1;
+            $address->postcode = $vars->invoice_address->zip_code;
+            $address->city = $vars->invoice_address->city;
+            $phone_number = $vars->invoice_address->phone_number;
+            $address->phone = $phone_number;
+            $address->phone_mobile = $phone_number;
+            if ($row) {
+                $address->update();
+            } else {
+                $address->add();
+            }
+            $cart->id_address_invoice = $address->id;
+            $cart->id_address_delivery = $address->id;
+        }
+        if ($vars->shipping_address) {
+            $id_country = Country::getByIso($this->getIso2($vars->shipping_address->country_code));
+            $address1 = $vars->shipping_address->street;
+            $address1 .= ' '.$vars->shipping_address->house_number;
+            $alias = 'mobilepay '.$this->l('delivery');
+            if ($vars->shipping_address->house_extension) {
+                $address1 .= ' '.$vars->shipping_address->house_extension;
+            }
+            $row = Db::getInstance()->getRow(
+                'SELECT `id_address`
+                FROM '._DB_PREFIX_.'address
+                WHERE `alias` = "'.$alias.'"
+                AND `id_customer` = "'.$customer->id.'"'
+            );
+            if ($row) {
+                $address = new Address($row['id_address']);
+            } else {
+                $address = new Address();
+            }
+            $address->id_customer = $customer->id;
+            $address->lastname = $customer->lastname;
+            $address->firstname = $customer->firstname;
+            $address->alias = $alias;
+            $address->id_country = $id_country;
+            $address->company = $vars->shipping_address->company_name;
+            $address->vat_number = $vars->shipping_address->vat_no;
+            $address->address1 = $address1;
+            $address->postcode = $vars->shipping_address->zip_code;
+            $address->city = $vars->shipping_address->city;
+            if ($vars->shipping_address->phone_number) {
+                $phone_number = $vars->shipping_address->phone_number;
+            }
+            $address->phone = $phone_number;
+            $address->phone_mobile = $phone_number;
+            if ($row) {
+                $address->update();
+            } else {
+                $address->add();
+            }
+            $cart->id_address_delivery = $address->id;
+        }
+        Context::getContext()->cart = $cart;
+        Context::getContext()->customer = $customer;
+        // Update delivery cache
+        $products = $cart->getProducts();
+        foreach ($products as $product) {
+            $cart->setProductAddressDelivery(
+                $product['id_product'],
+                $product['id_product_attribute'],
+                $product['id_address_delivery'],
+                $cart->id_address_delivery
+            );
+        }
+        $cart->update();
+        $this->context->cart = $cart;
+    }
+
+    public function validate($json, $checksum, $id_order_state = _PS_OS_PAYMENT_, $callback = false)
     {
         $this->getSetup();
         if ($checksum != $this->sign($json, $this->setup->private_key)) {
             $msg = 'QuickPay: Validate error. Checksum failed. Check private key in configuration';
-            Logger::addLog($msg, 2);
+            $this->addLog($msg, 2);
             die('Checksum failed');
         }
 
@@ -2146,10 +2531,15 @@ class QuickPay extends PaymentModule
         $test_mode = $vars->test_mode ? 1 : 0;
         $id_cart = (int)Tools::substr($vars->order_id, 3);
         $cart = new Cart($id_cart);
+        $this->context->cart = $cart;
+        if (!empty($vars->link->invoice_address_selection)) {
+            // MobilePay Checkout
+            $this->addCustomer($vars, $cart);
+        }
         if ($test_mode && !$this->setup->testmode) {
             $cart->delete();
             $msg = 'QuickPay: Validate error. Will not accept test payment!';
-            Logger::addLog($msg, 2, 0, 'Cart', $id_cart);
+            $this->addLog($msg, 2, 0, 'Cart', $id_cart);
             if ($id_order_state == _PS_OS_ERROR_) {
                 $fail_url = $this->getModuleLink('fail', array('status' => 'test'));
                 Tools::redirect($fail_url, '');
@@ -2158,8 +2548,18 @@ class QuickPay extends PaymentModule
         }
         if (!Validate::isLoadedObject($cart)) {
             $msg = 'QuickPay: Validate error. Not a valid cart';
-            Logger::addLog($msg, 2, 0, 'Cart', $id_cart);
+            $this->addLog($msg, 2, 0, 'Cart', $id_cart);
             die('Not a valid cart');
+        }
+        if ($callback && isset($vars->operations)) {
+            $operation = end($vars->operations);
+            if ($operation->type == 'capture') {
+                if ($operation->qp_status_code != '20000') {
+                    $msg = 'QuickPay: Capture error: '.$operation->qp_status_msg;
+                    $this->addLog($msg, 3, 0, 'Cart', $id_cart);
+                }
+                die('Callback type is capture');
+            }
         }
         if ($cart->OrderExists() != 0) {
             die('Order already exists');
@@ -2171,13 +2571,19 @@ class QuickPay extends PaymentModule
                 $vars->currency,
                 $currency->iso_code
             );
-            Logger::addLog($msg, 2, 0, 'Cart', $id_cart);
+            $this->addLog($msg, 2, 0, 'Cart', $id_cart);
         }
-        if ($this->v15) {
-            Shop::setContext(Shop::CONTEXT_SHOP, $cart->id_shop);
-            $customer = new Customer((int)$cart->id_customer);
-            Context::getContext()->customer = $customer;
-            Context::getContext()->currency = $currency;
+        Shop::setContext(Shop::CONTEXT_SHOP, $cart->id_shop);
+        $customer = new Customer((int)$cart->id_customer);
+        Context::getContext()->customer = $customer;
+        Context::getContext()->currency = $currency;
+        if ($this->v17 && !$this->v177) {
+            global $kernel;
+            if (!$kernel) {
+                require_once _PS_ROOT_DIR_.'/app/AppKernel.php';
+                $kernel = new \AppKernel('prod', false);
+                $kernel->boot();
+            }
         }
         $trans = Db::getInstance()->getRow(
             'SELECT *
@@ -2186,8 +2592,6 @@ class QuickPay extends PaymentModule
             ORDER BY `exec_id` ASC'
         );
         if ($trans['accepted']) {
-            $msg = 'QuickPay: Validate error. Order already accepted';
-            Logger::addLog($msg, 2, 0, 'Cart', $id_cart);
             die('Order already accepted');
         }
         Db::getInstance()->Execute(
@@ -2242,7 +2646,7 @@ class QuickPay extends PaymentModule
                     $cart->secure_key
                 )) {
                     $msg = 'QuickPay: Validate error. Unable to process order';
-                    Logger::addLog($msg, 2, 0, 'Cart', $id_cart);
+                    $this->addLog($msg, 2, 0, 'Cart', $id_cart);
                     die('Prestashop error - unable to process order..');
                 }
             } catch (Exception $exception) {
@@ -2253,7 +2657,7 @@ class QuickPay extends PaymentModule
                 );
                 $msg = 'QuickPay: Validate error. Exception ';
                 $msg .= $exception->getMessage();
-                Logger::addLog($msg, 2, 0, 'Cart', $id_cart);
+                $this->addLog($msg, 2, 0, 'Cart', $id_cart);
                 die('Prestashop error - got exception.');
             }
             $id_order = Order::getOrderByCartId($cart->id);
@@ -2281,7 +2685,11 @@ class QuickPay extends PaymentModule
     public function addFee(&$cart, $fee)
     {
         $id_lang = (int)$cart->id_lang;
-        $txt = $this->l('Credit card fee', $this->name, $id_lang);
+        if ($this->v16) {
+            $txt = $this->l('Credit card fee', $this->name);
+        } else {
+            $txt = $this->l('Credit card fee', $this->name, $id_lang);
+        }
         $row = Db::getInstance()->getRow(
             'SELECT `id_product`
             FROM '._DB_PREFIX_.'product
@@ -2300,9 +2708,7 @@ class QuickPay extends PaymentModule
         } else {
             $product = new Product();
         }
-        if ($this->v15) {
-            $cache_entries = Cache::retrieveAll();
-        }
+        $cache_entries = Cache::retrieveAll();
         if ($fee <= 0) {
             return;
         }
@@ -2310,7 +2716,12 @@ class QuickPay extends PaymentModule
         $product->link_rewrite = array();
         foreach (Language::getLanguages(false) as $lang) {
             $id_lang = $lang['id_lang'];
-            $product->name[$id_lang] = $this->l('Credit card fee', $this->name, $id_lang);
+            if ($this->v16) {
+                $txt = $this->l('Credit card fee', $this->name);
+            } else {
+                $txt = $this->l('Credit card fee', $this->name, $id_lang);
+            }
+            $product->name[$id_lang] = $txt;
             $product->link_rewrite[$id_lang] = 'fee';
         }
         $product->active = 0;
@@ -2322,9 +2733,7 @@ class QuickPay extends PaymentModule
         if ($currency->id != $id_currency && $currency->conversion_rate) {
             $product->price /= $currency->conversion_rate;
         }
-        if ($this->v15) {
-            $product->is_virtual = 1;
-        }
+        $product->is_virtual = 1;
         $product->id_tax_rules_group = $this->setup->feetax;
         if ($product->id_tax_rules_group) {
             $address = new Address($cart->id_address_delivery);
@@ -2336,49 +2745,39 @@ class QuickPay extends PaymentModule
             }
         }
         $product->price = Tools::ps_round($product->price, 6);
-        if ($this->v15) {
-            if ($row) {
-                $product->update();
-            } else {
-                Shop::setContext(Shop::CONTEXT_ALL, $cart->id_shop);
-                $product->add();
-                Shop::setContext(Shop::CONTEXT_SHOP, $cart->id_shop);
-            }
-            $rows = Group::getGroups($cart->id_lang);
-            foreach ($rows as $row) {
-                Db::getInstance()->Execute(
-                    'INSERT IGNORE INTO `'._DB_PREFIX_.'product_group_reduction_cache`
-                    (`id_product`, `id_group`, `reduction`)
-                    VALUES ('.(int)$product->id.', '.$row['id_group'].', 0)'
-                );
-            }
-            StockAvailable::setQuantity($product->id, 0, 100);
+        if ($row) {
+            $product->update();
         } else {
-            if ($row) {
-                $product->update();
-            } else {
-                $product->add();
-            }
+            Shop::setContext(Shop::CONTEXT_ALL, $cart->id_shop);
+            $product->add();
+            Shop::setContext(Shop::CONTEXT_SHOP, $cart->id_shop);
         }
+        $rows = Group::getGroups($cart->id_lang);
+        foreach ($rows as $row) {
+            Db::getInstance()->Execute(
+                'INSERT IGNORE INTO `'._DB_PREFIX_.'product_group_reduction_cache`
+                (`id_product`, `id_group`, `reduction`)
+                VALUES ('.(int)$product->id.', '.$row['id_group'].', 0)'
+            );
+        }
+        StockAvailable::setQuantity($product->id, 0, 100);
         $cart->updateQty(1, $product->id);
-        if ($this->v15) {
-            foreach ($cache_entries as $cache_id => $value) {
-                $entry = explode('_', $cache_id);
-                if ($entry[0] == 'getContextualValue') {
-                    $entry[] = $product->id;
-                    $entry[] = 0;
-                    $cache_id = implode('_', $entry);
-                    Cache::store($cache_id, $value);
-                    $cache_id = implode('_', $entry).'_1';
-                    Cache::store($cache_id, $value);
-                    $entry[4] = CartRule::FILTER_ACTION_ALL_NOCAP;
-                    $cache_id = implode('_', $entry);
-                    Cache::store($cache_id, $value);
-                    $cache_id = implode('_', $entry).'_1';
-                    Cache::store($cache_id, $value);
-                }
+        foreach ($cache_entries as $cache_id => $value) {
+            $entry = explode('_', $cache_id);
+            if ($entry[0] == 'getContextualValue') {
+                $entry[] = $product->id;
+                $entry[] = 0;
+                $cache_id = implode('_', $entry);
+                Cache::store($cache_id, $value);
+                $cache_id = implode('_', $entry).'_1';
+                Cache::store($cache_id, $value);
+                $entry[4] = CartRule::FILTER_ACTION_ALL_NOCAP;
+                $cache_id = implode('_', $entry);
+                Cache::store($cache_id, $value);
+                $cache_id = implode('_', $entry).'_1';
+                Cache::store($cache_id, $value);
             }
-            $cart->getPackageList(true); // Flush cache
         }
+        $cart->getPackageList(true); // Flush cache
     }
 }

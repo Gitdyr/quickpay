@@ -134,3 +134,84 @@ Do not invalidate cart cache.
 Version 4.0.38.
 Fixed problem for basket with % in product names.
 Fixed unwanted log message: Frontcontroller::init - Cart cannot be loaded or an order has already been placed using this cart
+Version 4.0.39
+2017-11-23 2017-12-15
+Removed unwanted spaces in test for PayPal method.
+Fixed module_version in variables.
+Version 4.0.40
+2017-12-15 2018-01-12
+Added shipping cost to payment information.
+Removed colon.
+Version 4.0.41
+2017-12-15 2018-02-08
+Parameter was missing for toQpAmount().
+Version 4.0.42
+2018-02-09 2018-02-19
+Reintroduced callback function.
+Version 4.0.43
+2018-02-19 2018-05-09
+Added Apple Pay and Bitcoin.
+Fixed PayPal payments with shipping cost greater than zero.
+Version 4.0.44
+2018-05-09 2019-01-03
+Added support for MobilePay Checkout.
+Fixed back office confirmation message.
+Removed obsolete argument (language ID) from displayDate.
+Added payment methods mastercard-debet (without -dk) and 3d_mastercard-debet (without -dk)
+Modified styling for logos.
+Use shop specific configuration for order (multistore) in admin panel.
+The variable "link" was missing in back office for PrestaShop 1.6.
+Fixed logging for PrestaShop 1.7.
+Ignore double validation (unnecessary log message removed).
+Fixed fail message (currency changed, test order) for PrestaShop 1.7.
+Use getMediaLink() for logos.
+Renamed Quickpay to QuickPay.
+Version 4.0.45
+2019-01-07 2019-01-14
+Fixed phone number for MobilePay Checkout.
+MobilePay Checkout option was not always properly disabled.
+Version 4.0.46
+2019-01-14 2019-06-23
+Added confirmation page for MobilePay Checkout
+Added Resurs Bank and Vipps
+Added alternative state for capture
+Added support for Dankort 3D
+Updated logos (Maestro/Mastercard)
+Version 4.0.47
+2019-06-23 2019-06-25
+Clean template cache
+Version 4.0.48
+2019-06-25 2019-08-04
+Added delivery address text for MobilePay Checkout
+Version 4.0.49
+2019-08-04 2020-05-17
+Setup cart in context to satisfy some OPC modules
+Support for automatic cancelling of payments
+Ignore callback with operation type capture
+Version 4.0.50
+2020-05-18 2020-09-28
+Renamed payment method from "klarna" to "klarna-payments"
+Version 4.0.51
+2020-09-28 2020-10-07
+Fixed usage of translation method
+Version 4.0.52
+2020-12-05 2020-12-15
+Updated for PrestaShop 1.7.7.0
+Version 4.0.53
+2020-12-15 2021-01-05
+Version 4.1.0
+Added GL and removed NO for MobilePay
+Fixed currency problem for PrestaShop 1.7.7
+Added ANYDAY Split
+Updated for Unzer release
+Use curl for local validation
+Version 4.1.6
+Fix problem with order complete when MobilePay switches to default browser
+Version 4.1.7
+Support for multiple order states for capture
+Version 4.1.8
+Added Google Pay
+Version 4.1.9
+Browser dependent payment methods
+Google Pay only shown for Chrome
+Apple Pay only shown for Safari

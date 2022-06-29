@@ -10,11 +10,11 @@
 *  E-mail: support@quickpay.net
 */
 
-class QuickPayPaymentModuleFrontController extends ModuleFrontController
+class QuickPayMobilepayModuleFrontController extends ModuleFrontController
 {
     public function postProcess()
     {
         $quickpay = new QuickPay();
-        $quickpay->payment();
+        $quickpay->mobilePay();
     }
 }

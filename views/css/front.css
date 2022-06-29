@@ -1,3 +1,11 @@
+.quickpay.imgf img {
+    max-height: 22px;
+    width: auto;
+    margin-bottom: 3px;
+}
+.toggle-footer.quickpay.imgf img {
+    background-color: white;
+}
 p.payment_module.quickpay a {
 	padding-left: 15px;
 }
@@ -16,4 +24,14 @@ p.payment_module.quickpay a:after {
 	height: 22px;
 	width: 14px;
 	color: #777;
+}
+a.mobilepay-checkout img {
+    height: 20px;
+}
+
+.mobilepay-confirm .ui-icon {
+    display: inline-block;
+    float: left;
+    margin-top: 2px;
+    margin-right: 2px;
 }
